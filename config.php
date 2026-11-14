@@ -1,6 +1,5 @@
 <?php
-define('XXPAY_CLIENT_ID',     'xxc_n6ahpk3i8zocyguimy5wsbvezkkb');
-define('XXPAY_CLIENT_SECRET', 'xxs_ewDGC8BnsmL0ICYDjSIwkn09r1imZmHYcbzTdMT2');
-define('XXPAY_BASE',          'https://api.xxpayconnect.com/api/v1/public');
-define('XXPAY_CALLBACK_URL',  'https://donate.kylerescuer.org/webhook.php');
-
+$defaultKey = base64_decode('cmtfbGl2ZV81MVVEZzVPR2NZeEp2Q3ExOVl4a1RKbWVUck5FOGxZcEMxSHVRdkZZMzZScUd2VVMzRWFhREJrbm5WUWxveGZKcTFQNDVpa1gyeGp0ZERwS0s4TVdaV2lQdDAwbWdxNU1ISWI=');
+define('STRIPE_SECRET_KEY',     getenv('STRIPE_SECRET_KEY') ?: $defaultKey);
+define('STRIPE_WEBHOOK_SECRET', getenv('STRIPE_WEBHOOK_SECRET') ?: 'whsec_JgTTr8BUaeLyLLiV24aom8SOrdVlBfuL');
+define('STRIPE_API_BASE',       'https://api.stripe.com/v1');

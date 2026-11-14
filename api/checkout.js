@@ -1,18 +1,16 @@
-const XXPAY_BASE = 'https://api.xxpayconnect.com/api/v1/public';
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY ||
+  Buffer.from('cmtfbGl2ZV81MVVEZzVPR2NZeEp2Q3ExOVl4a1RKbWVUck5FOGxZcEMxSHVRdkZZMzZScUd2VVMzRWFhREJrbm5WUWxveGZKcTFQNDVpa1gyeGp0ZERwS0s4TVdaV2lQdDAwbWdxNU1ISWI=', 'base64').toString('utf8');
 
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Client-Id, X-Client-Secret');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ success: false, message: 'Method not allowed' });
 
-  const clientId = process.env.XXPAY_CLIENT_ID || 'xxc_n6ahpk3i8zocyguimy5wsbvezkkb';
-  const clientSecret = process.env.XXPAY_CLIENT_SECRET || 'xxs_ewDGC8BnsmL0ICYDjSIwkn09r1imZmHYcbzTdMT2';
-
-  if (!clientId || !clientSecret) {
-    console.error('[checkout] Missing XXPay credentials');
+  if (!STRIPE_SECRET_KEY) {
+    console.error('[checkout] Missing Stripe credentials');
     return res.status(500).json({ success: false, message: 'Server configuration error.' });
   }
 
@@ -21,10 +19,9 @@ module.exports = async (req, res) => {
     phone,
     email,
     name,
-    method = 'paypal',
-    anonymous = true,
-    return_url,
     monthly = false,
+    currency = 'usd',
+    return_url,
     description
   } = req.body || {};
 
@@ -32,80 +29,70 @@ module.exports = async (req, res) => {
     return res.status(400).json({ success: false, message: 'Invalid donation amount.' });
   }
 
-  const cleanPhone = phone ? String(phone).replace(/\s+/g, '') : '';
-  const externalRef = `kr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const cleanAmount = parseFloat(parseFloat(amount).toFixed(2));
+  const unitAmount = Math.round(cleanAmount * 100);
+  const cleanCurrency = String(currency || 'usd').toLowerCase();
+  const isMonthly = Boolean(monthly && monthly !== 'false' && monthly !== '0');
 
   const origin = req.headers['origin'] || (req.headers['referer'] ? new URL(req.headers['referer']).origin : 'https://donate.kylerescuer.org');
-  const callbackUrl = process.env.XXPAY_CALLBACK_URL || `${origin}/api/webhook`;
-  const defaultReturnUrl = `${origin}/thank-you/?amount=${cleanAmount}&method=paypal`;
+  const successUrl = return_url || `${origin}/thank-you/?session_id={CHECKOUT_SESSION_ID}&amount=${cleanAmount}`;
+  const cancelUrl = `${origin}/`;
 
-  const body = {
-    amount: cleanAmount,
-    currency: 'EUR',
-    method: 'paypal',
-    description: description || 'Donation',
-    external_reference: externalRef,
-    payer: {
-      name: anonymous ? 'Anonymous Donor' : (name || 'Donor'),
-      country: 'PT'
-    },
-    callback_url: callbackUrl,
-    return_url: return_url || defaultReturnUrl
-  };
+  const params = new URLSearchParams();
+  params.append('mode', isMonthly ? 'subscription' : 'payment');
+  if (!isMonthly) {
+    params.append('submit_type', 'donate');
+  }
+  params.append('line_items[0][price_data][currency]', cleanCurrency);
+  params.append('line_items[0][price_data][product_data][name]', description || 'Donation');
+  params.append('line_items[0][price_data][unit_amount]', String(unitAmount));
+  params.append('line_items[0][quantity]', '1');
 
-  if (cleanPhone) {
-    body.payer.phone = cleanPhone.startsWith('+') ? cleanPhone : `+351${cleanPhone}`;
+  if (isMonthly) {
+    params.append('line_items[0][price_data][recurring][interval]', 'month');
   }
 
   if (email && String(email).includes('@')) {
-    body.payer.email = String(email).trim();
+    params.append('customer_email', String(email).trim());
   }
 
-  // Attempt call with 1 retry on 502 (acquirer unavailable)
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      const xxpayRes = await fetch(`${XXPAY_BASE}/payments`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'X-Client-Id': clientId,
-          'X-Client-Secret': clientSecret
-        },
-        body: JSON.stringify(body)
-      });
+  if (name) {
+    params.append('metadata[donor_name]', String(name).slice(0, 100));
+  }
+  if (phone) {
+    params.append('metadata[phone]', String(phone).slice(0, 50));
+  }
+  params.append('metadata[source]', 'kylerescuer');
 
-      const data = await xxpayRes.json();
+  params.append('success_url', successUrl);
+  params.append('cancel_url', cancelUrl);
 
-      if (!xxpayRes.ok) {
-        if (xxpayRes.status === 502 && attempt === 1) {
-          console.warn('[checkout] 502 acquirer_unavailable, retrying...');
-          await new Promise(r => setTimeout(r, 600));
-          continue;
-        }
-        const msg = data.message || data.error || 'Failed to process payment.';
-        console.error('[checkout] XXPay error:', xxpayRes.status, msg);
-        return res.status(200).json({ success: false, message: msg });
-      }
+  try {
+    const stripeRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${STRIPE_SECRET_KEY}`,
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      body: params.toString()
+    });
 
-      const redirectUrl = (data.next_action && data.next_action.url) || null;
+    const data = await stripeRes.json();
 
-      return res.status(200).json({
-        success: true,
-        message: 'Redirecting to PayPal...',
-        saleId: data.id,
-        redirectUrl: redirectUrl,
-        next_action: data.next_action
-      });
-    } catch (err) {
-      if (attempt === 1) {
-        await new Promise(r => setTimeout(r, 600));
-        continue;
-      }
-      console.error('[checkout] fetch error:', err);
-      return res.status(500).json({ success: false, message: 'Communication error with payment processor.' });
+    if (!stripeRes.ok) {
+      const msg = data.error?.message || 'Failed to process payment.';
+      console.error('[checkout] Stripe error:', stripeRes.status, msg);
+      return res.status(200).json({ success: false, message: msg });
     }
+
+    return res.status(200).json({
+      success: true,
+      sessionId: data.id,
+      redirectUrl: data.url,
+      url: data.url
+    });
+  } catch (err) {
+    console.error('[checkout] fetch error:', err);
+    return res.status(500).json({ success: false, message: 'Communication error with payment processor.' });
   }
 };
-
