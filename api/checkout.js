@@ -64,6 +64,14 @@ module.exports = async (req, res) => {
   }
   params.append('metadata[source]', 'kylerescuer');
 
+  // UTM tracking attribution for sales
+  const utmFields = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'src', 'sck'];
+  for (const field of utmFields) {
+    if (req.body && req.body[field]) {
+      params.append(`metadata[${field}]`, String(req.body[field]).slice(0, 100));
+    }
+  }
+
   params.append('success_url', successUrl);
   params.append('cancel_url', cancelUrl);
 

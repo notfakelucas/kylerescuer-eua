@@ -80,6 +80,14 @@ if ($phone) {
     $params['metadata']['phone'] = mb_substr($phone, 0, 50);
 }
 
+// UTM tracking attribution for sales
+$utmFields = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'src', 'sck'];
+foreach ($utmFields as $field) {
+    if (!empty($body[$field])) {
+        $params['metadata'][$field] = mb_substr($body[$field], 0, 100);
+    }
+}
+
 $postFields = http_build_query($params);
 
 $ch = curl_init(STRIPE_API_BASE . '/checkout/sessions');
